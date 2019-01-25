@@ -4,17 +4,23 @@ from __future__ import absolute_import
 from __future__ import division
 
 import pickle
-import os
-import glob
 import numpy as np
-import librosa
 import sklearn
 
-test_x = pickle.load(open('./test_x.dat', 'rb'))
-test_y = pickle.load(open('./test_y.dat', 'rb'))
+train_x = pickle.load(open('./train_x.dat', 'rb'))
+train_y = pickle.load(open('./train_y.dat', 'rb'))
 
-print type(test_x)
-print type(test_y)
+val_x = pickle.load(open('./val_x.dat', 'rb'))
+val_y = pickle.load(open('./val_y.dat', 'rb'))
 
-print test_x.shape
-print test_y.shape
+print "########## Train Dataset ###############"
+print "MFCC features shape : "
+print train_x.shape
+print "MFCC labels shape : "
+print train_y.shape
+
+print "########## Val Dataset #################"
+print "MFCC features shape : "
+print val_x.shape
+print "MFCC labels shape : "
+print val_y.shape

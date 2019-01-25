@@ -7,8 +7,20 @@ import pickle
 import numpy as np
 import tensorflow as tf
 
+
+
 ACTIVATION = tf.nn.relu
 STDDEV = 0.01
+
+EPOCH = 500
+LEARNING_RATE_BASE = 0.1  
+LEARNING_RATE_DECAY = 0.99   
+REGULARIZATION_RATE= 0.0001
+LEARNING_DECAY_STEP = 1000
+TRAINING_STEPS = 30000     
+MOVING_AVERAGE_DECAY = 0.99
+
+BATCH_SIZE = 32
 
 """ 0. Load Datasets
 """
@@ -21,6 +33,7 @@ def one_hot(labels):
     onehots = np.array(onehots)
     return onehots
 
+print "============> load dataset..."
 train_x = pickle.load(open('./train_x.dat', 'rb'))
 train_y = pickle.load(open('./train_y.dat', 'rb'))
 train_y = one_hot(train_y)
@@ -31,9 +44,6 @@ val_y = pickle.load(open('./val_y.dat', 'rb'))
 val_y = one_hot(val_y)
 val_len = val_y.shape[0]
 
-# test_x = pickle.load(open('./test_x.dat', 'rb'))
-# test_y = pickle.load(open('./test_y.dat', 'rb'))
-# test.len = test_y.shape[0]
 
 """ 1. CNN Net Blocks
 """
@@ -70,11 +80,15 @@ def fc_block(inputs, outputs, regularizer, activation=None, flatten=False, is_dr
         if is_dropout:
             fc = tf.cond(is_training, lambda: tf.nn.dropout(fc, 0.5), lambda: fc)
     return fc
+
+""" Train Body
+"""
 with tf.name_scope("input"):
-    x_input = tf.placeholder(tf.float32, [32,40,173,1], name="x-input")
-    y_input = tf.placeholder(tf.float32, [32,10], name="y-input")
-    x_val_input = tf.placeholder(tf.float32, [32,40,173,1], name="x-val-input")
-    y_val_input = tf.placeholder(tf.float32, [32,10], name="y-val-input")
+    x_input = tf.placeholder(tf.float32, [BATCH_SIZE,40,173,1], name="x-input")
+    y_input = tf.placeholder(tf.float32, [BATCH_SIZE,10], name="y-input")
+    x_val_input = tf.placeholder(tf.float32, [BATCH_SIZE,40,173,1], name="x-val-input")
+    y_val_input = tf.placeholder(tf.float32, [BATCH_SIZE,10], name="y-val-input")
+
 with tf.name_scope("Cnn_Net"):
     net = conv2d_block(x_input, [3,3,1,32], [1,1,1,1], scope="conv1")
     net = maxpool_block(net, [1,2,2,1], [1,2,2,1], scope="pool1")
@@ -82,8 +96,8 @@ with tf.name_scope("Cnn_Net"):
     net = maxpool_block(net, [1,2,2,1], [1,2,2,1], scope="pool2")
     net = fc_block(net, 4096, None, activation=ACTIVATION, flatten=True, scope="fc1")
     net = fc_block(net, 4096, None, activation=ACTIVATION, scope="fc2")
-with tf.name_scope("Forward_Propagation"):
     y = fc_block(net, 10, None, scope="output")
+
 with tf.name_scope("Cnn_Net"):
     net = conv2d_block(x_val_input, [3,3,1,32], [1,1,1,1], scope="conv1")
     net = maxpool_block(net, [1,2,2,1], [1,2,2,1], scope="pool1")
@@ -91,8 +105,8 @@ with tf.name_scope("Cnn_Net"):
     net = maxpool_block(net, [1,2,2,1], [1,2,2,1], scope="pool2")
     net = fc_block(net, 4096, None, activation=ACTIVATION, flatten=True, scope="fc1")
     net = fc_block(net, 4096, None, activation=ACTIVATION, scope="fc2")
-with tf.name_scope("Forward_Propagation"):
     y_val = fc_block(net, 10, None, scope="output")
+
 global_step = tf.Variable(0, trainable=False)
 
 with tf.name_scope("Calc_Loss"):
@@ -102,16 +116,18 @@ with tf.name_scope("Calc_Loss"):
     cross_entropy_val = tf.nn.softmax_cross_entropy_with_logits(labels=y_val_input, logits=y_val)
     cross_entropy_mean_val = tf.reduce_mean(cross_entropy_val)
     loss_val = cross_entropy_mean_val
+
 with tf.name_scope("Back_Train"):
-    learning_rate = tf.train.exponential_decay(0.01 ,global_step, 1000, 0.99)  
+    learning_rate = tf.train.exponential_decay(LEARNING_RATE_BASE ,global_step, LEARNING_DECAY_STEP, LEARNING_RATE_DECAY)  
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
-        train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss, global_step=global_step) 
+        train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss, global_step=global_step)
+
 with tf.name_scope("Calc_Acc"):
-    correct_prediction = tf.equal(tf.argmax(y_input), tf.argmax(y))
+    correct_prediction = tf.equal(tf.argmax(y_input), tf.argmax(tf.nn.softmax(y)))
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-    correct_prediction_val = tf.equal(tf.argmax(y_val_input), tf.argmax(y_val))
+    correct_prediction_val = tf.equal(tf.argmax(y_val_input), tf.argmax(tf.nn.softmax(y_val)))
     accuracy_val = tf.reduce_mean(tf.cast(correct_prediction_val, tf.float32))
 
 tf.summary.scalar("loss_train", loss)
@@ -126,23 +142,24 @@ with tf.Session() as sess:
     init_op = tf.global_variables_initializer()
     sess.run(init_op)
 
-    for i in range(10000):
-        data_indexs = np.random.choice(train_len, 32)
+    for i in range(int(train_len * EPOCH / BATCH_SIZE)):
+        data_indexs = np.random.choice(train_len, BATCH_SIZE)
         inputs_x = train_x[data_indexs]
         inputs_x = np.expand_dims(inputs_x, axis=3)
         inputs_y = train_y[data_indexs]
         _, loss_value, step = sess.run([train_step, loss, global_step], feed_dict={x_input:inputs_x, y_input:inputs_y})
         
         if i%100 == 0:
-            val_index = np.random.choice(val_len, 32)
+            val_index = np.random.choice(val_len, BATCH_SIZE)
             inputs_x_val = val_x[val_index]
             inputs_x_val = np.expand_dims(inputs_x_val, axis=3)
             inputs_y_val = val_y[val_index]
-            summary_str, loss_val_value, step_val = sess.run([merged, loss_val, global_step], feed_dict={x_val_input:inputs_x_val, y_val_input:inputs_y_val, x_input:inputs_x, y_input:inputs_y})
+            summary_str, step_val, acc, acc_val = sess.run([merged, global_step, accuracy, accuracy_val], feed_dict={x_val_input:inputs_x_val, y_val_input:inputs_y_val, x_input:inputs_x, y_input:inputs_y})
             writer.add_summary(summary_str, i)
             print "########### step : {0} ############".format(str(step_val))
-            print "     loss      = {0}                ".format(str(loss_value))
-            print "     loss_val  = {0}                  ".format(str(loss_val_value))
+            print "           loss  = {0}             ".format(str(loss_value))
+            print "           acc   = {0} %           ".format(str(int(acc*100)))
+            print "         acc val = {0} %           ".format(str(int(acc_val*100)))
 
         if i%500 == 0:
             saver.save(sess, "./models/model.ckpt")        
